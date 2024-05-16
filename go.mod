@@ -1,4 +1,4 @@
-module github.com/version2beta/supper
+module github.com/version2beta/soop
 
 go 1.22.2
 

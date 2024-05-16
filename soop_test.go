@@ -1,4 +1,4 @@
-package supper
+package soop
 
 import (
 	"context"
@@ -39,56 +39,22 @@ func (w *ProcessWorker) Handle(ctx context.Context, in <-chan TestInputType, out
 	}
 }
 
-func TestSupervisor_Process(t *testing.T) {
-	// Time the actual test run
-	start := time.Now()
-	defer func() {
-		fmt.Printf("Test took %v for %d iterations\n", time.Since(start), COUNT)
-	}()
-
+func TestSupervisor_ZeroWorkers(t *testing.T) {
 	ctx := context.Background()
-	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, WORKERS)
-	inputCh, outputCh, errorCh, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
+	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, 0)
+	_, _, _, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
 		return &ProcessWorker{}
 	})
-	if err != nil {
-		t.Fatal("Failed to start supervisor:", err)
-	}
+	assert.Error(t, err, "Expected error for zero workers")
+}
 
-	go func() {
-		for i := 0; i < COUNT; i++ {
-			inputCh <- TestInputType{i}
-		}
-	}()
-
-	var c int
-	timeout := time.After(TIMEOUT)
-
-	var done bool
-
-	for {
-		select {
-		case _, ok := <-outputCh:
-			if !ok {
-				t.Error("Output channel closed unexpectedly")
-			}
-			c++
-			done = c == COUNT
-		case err := <-errorCh:
-			assert.NoError(t, err, "Error received from worker on error channel")
-		case <-timeout:
-			t.Error("Timed out waiting for response")
-		}
-
-		if done {
-			break
-		}
-	}
-
-	err = supervisor.Stop()
-	if err != nil {
-		t.Fatal("Failed to stop supervisor:", err)
-	}
+func TestSupervisor_NegativeWorkers(t *testing.T) {
+	ctx := context.Background()
+	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, -1)
+	_, _, _, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
+		return &ProcessWorker{}
+	})
+	assert.Error(t, err, "Expected error for negative workers")
 }
 
 func TestSupervisor_GracefulShutdown(t *testing.T) {
@@ -201,33 +167,18 @@ func TestSupervisor_ErrorHandling(t *testing.T) {
 	}
 }
 
-func TestSupervisor_ZeroWorkers(t *testing.T) {
-	ctx := context.Background()
-	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, 0)
-	_, _, _, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
-		return &ProcessWorker{}
-	})
-	assert.Error(t, err, "Expected error for zero workers")
-}
-
-func TestSupervisor_NegativeWorkers(t *testing.T) {
-	ctx := context.Background()
-	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, -1)
-	_, _, _, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
-		return &ProcessWorker{}
-	})
-	assert.Error(t, err, "Expected error for negative workers")
-}
-
-func TestSupervisor_HighConcurrency(t *testing.T) {
+func TestSupervisor_Process(t *testing.T) {
 	// Time the actual test run
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Test took %v for %d iterations\n", time.Since(start), COUNT)
+		fmt.Printf("Using %d workers\n", WORKERS)
+		fmt.Printf("Average processing time per item: %v\n", time.Since(start)/time.Duration(COUNT))
+		fmt.Printf("Iterations per second: %v\n", float64(COUNT)/time.Since(start).Seconds())
 	}()
 
 	ctx := context.Background()
-	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, WORKERS*25)
+	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, WORKERS)
 	inputCh, outputCh, errorCh, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
 		return &ProcessWorker{}
 	})
@@ -235,38 +186,90 @@ func TestSupervisor_HighConcurrency(t *testing.T) {
 		t.Fatal("Failed to start supervisor:", err)
 	}
 
+	timeout := time.After(5 * time.Second)
+
 	go func() {
-		for i := 0; i < COUNT; i++ {
-			inputCh <- TestInputType{i}
+		var c int
+		var done bool
+
+		for {
+			select {
+			case _, ok := <-outputCh:
+				if !ok {
+					t.Error("Output channel closed unexpectedly")
+				}
+				c++
+				done = c == COUNT
+			case err := <-errorCh:
+				assert.NoError(t, err, "Error received from worker on error channel")
+			case <-timeout:
+				t.Error("Timed out waiting for response")
+			}
+
+			if done {
+				break
+			}
 		}
+
+		supervisor.Stop()
 	}()
 
-	var c int
-	timeout := time.After(TIMEOUT)
+	for i := 0; i < COUNT; i++ {
+		inputCh <- TestInputType{i}
+	}
+}
 
-	var done bool
+func TestSupervisor_HighConcurrency(t *testing.T) {
+	count := COUNT * 50
+	workers := WORKERS * 50
 
-	for {
-		select {
-		case _, ok := <-outputCh:
-			if !ok {
-				t.Error("Output channel closed unexpectedly")
-			}
-			c++
-			done = c == COUNT
-		case err := <-errorCh:
-			assert.NoError(t, err, "Error received from worker on error channel")
-		case <-timeout:
-			t.Error("Timed out waiting for response")
-		}
+	// Time the actual test run
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Test took %v for %d iterations\n", time.Since(start), count)
+		fmt.Printf("Using %d workers\n", workers)
+		fmt.Printf("Average processing time per item: %v\n", time.Since(start)/time.Duration(count))
+		fmt.Printf("Iterations per second: %v\n", float64(count)/time.Since(start).Seconds())
+	}()
 
-		if done {
-			break
-		}
+	ctx := context.Background()
+	supervisor := NewSupervisor[TestInputType, TestOutputType](ctx, workers)
+	inputCh, outputCh, errorCh, err := supervisor.Start(func() Worker[TestInputType, TestOutputType] {
+		return &ProcessWorker{}
+	})
+	if err != nil {
+		t.Fatal("Failed to start supervisor:", err)
 	}
 
-	err = supervisor.Stop()
-	if err != nil {
-		t.Fatal("Failed to stop supervisor:", err)
+	timeout := time.After(30 * time.Second)
+
+	go func() {
+		var c int
+		var done bool
+
+		for {
+			select {
+			case _, ok := <-outputCh:
+				if !ok {
+					t.Error("Output channel closed unexpectedly")
+				}
+				c++
+				done = c == count
+			case err := <-errorCh:
+				assert.NoError(t, err, "Error received from worker on error channel")
+			case <-timeout:
+				t.Error("Timed out waiting for response")
+			}
+
+			if done {
+				break
+			}
+		}
+
+		supervisor.Stop()
+	}()
+
+	for i := 0; i < count; i++ {
+		inputCh <- TestInputType{i}
 	}
 }

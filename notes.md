@@ -383,7 +383,7 @@ Let's please make "modes of operation" that fit these needs, and others if you c
 
 In all of these cases, I don't want a goroutine or a pool to go away when it doesn't have anything to do. Two of my needs from this library are related to performance:
 
-- I want to have a buffer with reusable memory so as to avoid garbage collection. I think we could do that by providing a buffer-channel factory in our supper library that can create our channels connecting supervisors.
+- I want to have a buffer with reusable memory so as to avoid garbage collection. I think we could do that by providing a buffer-channel factory in our soop library that can create our channels connecting supervisors.
 - I want to be efficient in the use of goroutines, too, and avoid both signaling and garbage collection.
 
 Can we revisit the code with these ideas?

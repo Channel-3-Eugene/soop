@@ -1,4 +1,4 @@
-package supper
+package soop
 
 import (
 	"context"
@@ -54,11 +54,8 @@ func (s *Supervisor[I, O]) Start(workerFactory func() Worker[I, O]) (chan I, cha
 
 // Stop gracefully stops the supervisor and its workers
 func (s *Supervisor[I, O]) Stop() error {
-	println("cancelling...")
 	s.cancel()
-	println("waiting...")
 	s.wg.Wait()
-	println("closing...")
 	close(s.outputCh)
 	close(s.errorCh)
 	return nil
