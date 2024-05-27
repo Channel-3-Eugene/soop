@@ -276,7 +276,7 @@ func TestSupervisor_RestartsWorkers(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, COUNT+1, recdItems, "Expected %d items to be received, got %d", recdItems)
+	assert.Equal(t, COUNT, recdItems, "Expected %d items to be received, got %d", recdItems)
 
 	// Ensure graceful shutdown
 	close(inChan)
