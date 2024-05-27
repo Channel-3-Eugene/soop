@@ -18,70 +18,76 @@ type Supervisor[I, O any] interface {
 // SupervisorNode represents a supervisor node that manages a pool of workers.
 type SupervisorNode[I, O any] struct {
 	node
-	inChan     chan *I
-	outChan    chan *O
-	evOutChan  chan error
-	handler    EventHandler
-	pool       WorkerPool[I, O]
-	ctx        context.Context
-	cancelFunc context.CancelFunc
+	inChan       chan *I
+	outChan      chan *O
+	eventInChan  chan error
+	eventOutChan chan error
+	handler      EventHandler
+	pool         WorkerPool[I, O]
+	ctx          context.Context
+	cancelFunc   context.CancelFunc
 }
 
 // NewSupervisorNode creates a new supervisor node.
-func NewSupervisorNode[I, O any](ctx context.Context, name string, handler EventHandler, pool WorkerPool[I, O]) Supervisor[I, O] {
+func NewSupervisorNode[I, O any](ctx context.Context, name string, inputCh chan *I, buffSize int, handler EventHandler, pool WorkerPool[I, O]) Supervisor[I, O] {
 	return &SupervisorNode[I, O]{
-		node:      newNode(ctx, name, NodeTypeSupervisor, nil),
-		inChan:    make(chan *I),
-		outChan:   make(chan *O),
-		evOutChan: make(chan error),
-		handler:   handler,
-		pool:      pool,
-		ctx:       ctx,
+		node:         newNode(ctx, name, NodeTypeSupervisor, nil),
+		inChan:       inputCh,
+		outChan:      make(chan *O, buffSize),
+		eventInChan:  make(chan error, 10),
+		eventOutChan: nil,
+		handler:      handler,
+		pool:         pool,
+		ctx:          ctx,
 	}
 }
 
 // Start starts the supervisor and its worker pool.
 func (s *SupervisorNode[I, O]) Start() (chan *I, chan *O, chan error, error) {
-	if s.inChan == nil || s.outChan == nil || s.evOutChan == nil {
+	if s.inChan == nil || s.outChan == nil || s.eventInChan == nil {
 		return nil, nil, nil, errors.New("input, output, or error channel is not initialized")
 	}
 
 	ctx, cancelFunc := context.WithCancel(s.ctx)
 	s.cancelFunc = cancelFunc
 
-	s.pool.Start(s.inChan, s.outChan, s.evOutChan)
+	s.pool.Start(s.inChan, s.outChan, s.eventInChan)
 
 	go func() {
 		for {
 			select {
-			case err := <-s.evOutChan:
-				s.Handle(err)
+			case event := <-s.eventInChan:
+				fmt.Printf("\nSupervisor processing event: %v\n\n", event)
+				s.Handle(event)
+				fmt.Printf("\nSupervisor processed event: %v\n\n", event)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	return s.inChan, s.outChan, s.evOutChan, nil
+	return s.inChan, s.outChan, s.eventInChan, nil
 }
 
 // Handle processes an error event.
 func (s *SupervisorNode[I, O]) Handle(event error) {
 	var customErr *Error[I]
 	if errors.As(event, &customErr) {
-		fmt.Printf("Error: %#v\n", customErr)
 		if customErr.Level == ErrorLevelCritical {
 			err := s.pool.RemoveWorker(customErr.Node)
 			if err != nil {
 				fmt.Printf("Failed to remove worker: %v\n", err)
 			}
-			// Replace the worker after removal
+			// Replace the worker
 			s.pool.AddWorkers(1)
 		}
-		fmt.Printf("Resubmitting input: %#v\n", customErr.InputItem)
 		s.inChan <- customErr.InputItem
+		fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
 	}
-	s.evOutChan <- s.handler(event)
+
+	if s.eventOutChan != nil {
+		s.eventOutChan <- s.handler(event)
+	}
 }
 
 // Stop stops the supervisor and its worker pool.
@@ -89,9 +95,9 @@ func (s *SupervisorNode[I, O]) Stop() error {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 		s.cancelFunc = nil // Set to nil to prevent multiple cancels
-		close(s.inChan)
+		// Not closing s.inChan and s.eventInChan because they are owned by other processes
 		close(s.outChan)
-		close(s.evOutChan)
+		close(s.eventInChan)
 		return nil
 	}
 	return errors.New("supervisor not running")

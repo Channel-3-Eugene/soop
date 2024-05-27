@@ -126,6 +126,32 @@ func TestWorkerNode_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestWorkerPool_ZeroWorkers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := NewWorkerPool(ctx, 0, 0, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
+	})
+	assert.Error(t, err, "Expected error for zero workers")
+}
+
+func TestWorkerPool_NegativeWorkers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := NewWorkerPool(ctx, -1, -1, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
+	})
+	assert.Error(t, err, "Expected error for negative workers")
+	assert.EqualError(t, err, "min workers must be greater than zero", "Expected 'min workers must be greater than zero' error")
+}
+
 func TestWorkerPool_Initialization(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
