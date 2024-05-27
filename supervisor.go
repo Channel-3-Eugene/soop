@@ -69,6 +69,7 @@ func (s *SupervisorNode[I, O]) Start() (chan *I, chan *O, chan error, error) {
 func (s *SupervisorNode[I, O]) Handle(event error) {
 	var customErr *Error[I]
 	if errors.As(event, &customErr) {
+		fmt.Printf("Error: %#v\n", customErr)
 		if customErr.Level == ErrorLevelCritical {
 			err := s.pool.RemoveWorker(customErr.Node)
 			if err != nil {
@@ -77,11 +78,10 @@ func (s *SupervisorNode[I, O]) Handle(event error) {
 			// Replace the worker after removal
 			s.pool.AddWorkers(1)
 		}
+		fmt.Printf("Resubmitting input: %#v\n", customErr.InputItem)
 		s.inChan <- customErr.InputItem
 	}
-	if err := s.handler(event); err != nil {
-		s.evOutChan <- err
-	}
+	s.evOutChan <- s.handler(event)
 }
 
 // Stop stops the supervisor and its worker pool.

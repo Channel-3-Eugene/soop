@@ -42,13 +42,15 @@ func (w *WorkerNode[I, O]) Start(ctx context.Context, inChan chan *I, outChan ch
 		println("worker ", w.ID, " started")
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Printf("worker %d panicked\n", w.ID)
 				switch r := r.(type) {
-				case I:
-					errChan <- NewError(w.ID, ErrorLevelCritical, "worker panicked", fmt.Errorf("%v", r), &r)
+				case *I:
+					fmt.Printf("worker %d panicked with (I) %#v\n", w.ID, r)
+					errChan <- NewError(w.ID, ErrorLevelCritical, "worker panicked", fmt.Errorf("%v", r), r)
 				case error:
+					fmt.Printf("worker %d panicked with (error) %#v\n", w.ID, r)
 					errChan <- NewError(w.ID, ErrorLevelCritical, "worker panicked", r, (*I)(nil))
 				default:
+					fmt.Printf("worker %d panicked with (default) %#v\n", w.ID, r)
 					errChan <- NewError(w.ID, ErrorLevelCritical, "worker panicked", fmt.Errorf("%v", r), (*I)(nil))
 				}
 				return

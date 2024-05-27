@@ -2,8 +2,10 @@ package soop
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"math"
+	"math/big"
 	"testing"
 	"time"
 
@@ -309,10 +311,12 @@ func TestSupervisor_RestartsWorkers(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a worker pool with a handler that panics for every 10th input
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+	pool, err := NewWorkerPool(ctx, WORKERS-1, WORKERS+1, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
 		return NewWorkerNode(ctx, fmt.Sprintf("node-%d", id), func(input *TestInputType) (TestOutputType, error) {
-			if input.c%3 == 0 {
-				panic("simulated panic")
+			n, _ := rand.Int(rand.Reader, big.NewInt(5))
+			if n.Int64() == 0 {
+
+				panic(input)
 			}
 			return TestOutputType{n: input.c}, nil
 		}).(*WorkerNode[TestInputType, TestOutputType])
