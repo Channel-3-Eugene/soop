@@ -33,15 +33,38 @@ type Error[I any] struct {
 	InputItem *I
 }
 
+// NewError creates a new Error.
+func NewError[I any](node uint64, level ErrorLevel, message string, err error, inputItem *I) *Error[I] {
+	if level == ErrorLevelDefault {
+		level = DefaultErrorLevel
+	}
+
+	return &Error[I]{
+		Node:      node,
+		Level:     level,
+		Message:   message,
+		Err:       err,
+		InputItem: inputItem,
+	}
+}
+
 // Error implements the error interface.
 func (e *Error[I]) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-	if e.Err != nil {
-		return fmt.Sprintf("[%s] %s: %v (input: %+v)", e.Level.String(), e.Message, e.Err, e.InputItem)
+
+	var inputStr string
+	if e.InputItem != nil {
+		inputStr = fmt.Sprintf("%+v", *e.InputItem)
+	} else {
+		inputStr = "<nil>"
 	}
-	return fmt.Sprintf("[%s] %s (input: %+v)", e.Level.String(), e.Message, e.InputItem)
+
+	if e.Err != nil {
+		return fmt.Sprintf("[%s] %s: %v (input: %s)", e.Level.String(), e.Message, e.Err, inputStr)
+	}
+	return fmt.Sprintf("[%s] %s (input: %s)", e.Level.String(), e.Message, inputStr)
 }
 
 // Unwrap returns the underlying error.
@@ -64,20 +87,5 @@ func (level ErrorLevel) String() string {
 		return "CRITICAL"
 	default:
 		return "UNKNOWN"
-	}
-}
-
-// NewError creates a new Error.
-func NewError[I any](node uint64, level ErrorLevel, message string, err error, inputItem *I) *Error[I] {
-	if level == ErrorLevelDefault {
-		level = DefaultErrorLevel
-	}
-
-	return &Error[I]{
-		Node:      node,
-		Level:     level,
-		Message:   message,
-		Err:       err,
-		InputItem: inputItem,
 	}
 }

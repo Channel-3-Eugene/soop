@@ -17,20 +17,22 @@ const (
 	NodeTypeDefault NodeType = iota
 	NodeTypeWorker
 	NodeTypePool
+	NodeTypePoolSupervisor
 	NodeTypeSupervisor
 )
 
 var nodeTypeNames = map[NodeType]string{
-	NodeTypeDefault:    "node",
-	NodeTypeWorker:     "worker",
-	NodeTypePool:       "pool",
-	NodeTypeSupervisor: "supervisor",
+	NodeTypeDefault:        "node",
+	NodeTypeWorker:         "worker",
+	NodeTypePool:           "pool",
+	NodeTypePoolSupervisor: "pool-supervisor",
+	NodeTypeSupervisor:     "supervisor",
 }
 
 type node struct {
 	ID        uint64
 	name      string
-	typeName  NodeType
+	nodeType  NodeType
 	factory   func() Node
 	startTime time.Time
 	ctx       context.Context
@@ -45,7 +47,7 @@ func generateNodeID() uint64 {
 func newNode(ctx context.Context, name string, node_type NodeType, factory func() Node) node {
 	n := node{
 		ID:        generateNodeID(),
-		typeName:  node_type,
+		nodeType:  node_type,
 		startTime: time.Now(),
 		factory:   factory,
 		ctx:       ctx,
