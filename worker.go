@@ -39,7 +39,6 @@ func (w *WorkerNode[I, O]) Handle(input *I) (O, error) {
 // Start starts the worker and processes inputs from the input channel.
 func (w *WorkerNode[I, O]) Start(ctx context.Context, inChan chan *I, outChan chan *O, errChan chan error) {
 	go func() {
-		fmt.Printf("%s started\n", w.name)
 		defer func() {
 			if r := recover(); r != nil {
 				switch r := r.(type) {
