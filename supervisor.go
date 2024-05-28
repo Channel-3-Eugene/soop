@@ -6,67 +6,75 @@ import (
 	"fmt"
 )
 
-// EventHandler processes an error event.
-type EventHandler func(error) error
-
-// Supervisor represents a supervisor that manages a pool of workers.
 type Supervisor[I, O any] interface {
-	Start() (chan *I, chan *O, chan error, error)
+	GetID() uint64
+	GetName() string
+	Start() error
 	Stop() error
+	GetChildren() map[uint64]Node
+	SetEventOutChan(chan error)
 }
 
-// SupervisorNode represents a supervisor node that manages a pool of workers.
+// SupervisorNode represents a supervisor node that manages child nodes.
 type SupervisorNode[I, O any] struct {
 	node
-	inChan       chan *I
-	outChan      chan *O
+	children     map[uint64]Node
 	eventInChan  chan error
 	eventOutChan chan error
 	handler      EventHandler
-	pool         WorkerPool[I, O]
 	ctx          context.Context
 	cancelFunc   context.CancelFunc
 }
 
-// NewSupervisorNode creates a new supervisor node.
-func NewSupervisorNode[I, O any](ctx context.Context, name string, inputCh chan *I, buffSize int, handler EventHandler, pool WorkerPool[I, O]) Supervisor[I, O] {
+// NewSupervisor creates a new supervisor node with children.
+func NewSupervisor[I, O any](ctx context.Context, name string, buffSize int, handler EventHandler) *SupervisorNode[I, O] {
+	newCtx, cancel := context.WithCancel(ctx)
 	return &SupervisorNode[I, O]{
-		node:         newNode(ctx, name, NodeTypeSupervisor, nil),
-		inChan:       inputCh,
-		outChan:      make(chan *O, buffSize),
-		eventInChan:  make(chan error, 10),
-		eventOutChan: nil,
-		handler:      handler,
-		pool:         pool,
-		ctx:          ctx,
+		node:       newNode(ctx, name, NodeTypeSupervisor, nil), // TODO: Add factory function
+		ctx:        newCtx,
+		cancelFunc: cancel,
+		children:   make(map[uint64]Node),
 	}
 }
 
-// Start starts the supervisor and its worker pool.
-func (s *SupervisorNode[I, O]) Start() (chan *I, chan *O, chan error, error) {
-	if s.inChan == nil || s.outChan == nil || s.eventInChan == nil {
-		return nil, nil, nil, errors.New("input, output, or error channel is not initialized")
+// SetEventOutChan sets the output event channel.
+func (s *SupervisorNode[I, O]) SetEventOutChan(eventOutChan chan error) {
+	s.eventOutChan = eventOutChan
+}
+
+// AddChild adds a child node to the supervisor.
+func (s *SupervisorNode[I, O]) AddChild(node Node) error {
+	if s.nodeType != NodeTypeDefault && s.nodeType != NodeTypeSupervisor {
+		return NewError[error](s.ID, ErrorLevelError, fmt.Sprintf("Cannot add a child to a %s node", nodeTypeNames[s.nodeType]), nil, nil)
 	}
 
-	ctx, cancelFunc := context.WithCancel(s.ctx)
-	s.cancelFunc = cancelFunc
+	switch child := node.(type) {
+	case Supervisor[I, O]:
+		child.SetEventOutChan(s.eventInChan)
+		s.children[node.GetID()] = child
+	case PoolSupervisor[I, O]:
+		child.SetEventOutChan(s.eventInChan)
+		s.children[node.GetID()] = child
+	default:
+		return NewError[error](s.ID, ErrorLevelError, "Child node is not a supervisor", nil, nil)
+	}
 
-	s.pool.Start(s.inChan, s.outChan, s.eventInChan)
+	return nil
+}
 
-	go func() {
-		for {
-			select {
-			case event := <-s.eventInChan:
-				fmt.Printf("\nSupervisor processing event: %v\n\n", event)
-				s.Handle(event)
-				fmt.Printf("\nSupervisor processed event: %v\n\n", event)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+// GetID returns the ID of the supervisor node.
+func (s *SupervisorNode[I, O]) GetID() uint64 {
+	return s.ID
+}
 
-	return s.inChan, s.outChan, s.eventInChan, nil
+// GetName returns the name of the supervisor node.
+func (s *SupervisorNode[I, O]) GetName() string {
+	return s.name
+}
+
+// GetChildren returns the child nodes.
+func (s *SupervisorNode[I, O]) GetChildren() map[uint64]Node {
+	return s.children
 }
 
 // Handle processes an error event.
@@ -74,15 +82,10 @@ func (s *SupervisorNode[I, O]) Handle(event error) {
 	var customErr *Error[I]
 	if errors.As(event, &customErr) {
 		if customErr.Level == ErrorLevelCritical {
-			err := s.pool.RemoveWorker(customErr.Node)
-			if err != nil {
-				fmt.Printf("Failed to remove worker: %v\n", err)
-			}
-			// Replace the worker
-			s.pool.AddWorkers(1)
+			// Remove child
+			// TODO: Remove additional references, like children of a child, or nodes in a pool in a child pool supervisor.
+			delete(s.children, customErr.Node)
 		}
-		s.inChan <- customErr.InputItem
-		fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
 	}
 
 	if s.eventOutChan != nil {
@@ -90,15 +93,14 @@ func (s *SupervisorNode[I, O]) Handle(event error) {
 	}
 }
 
-// Stop stops the supervisor and its worker pool.
-func (s *SupervisorNode[I, O]) Stop() error {
-	if s.cancelFunc != nil {
-		s.cancelFunc()
-		s.cancelFunc = nil // Set to nil to prevent multiple cancels
-		// Not closing s.inChan and s.eventInChan because they are owned by other processes
-		close(s.outChan)
-		close(s.eventInChan)
-		return nil
+// Start starts the supervisor and its children.
+func (s *SupervisorNode[I, O]) Start() error {
+	for _, child := range s.children {
+		err := child.Start()
+		if err != nil {
+			return err
+		}
 	}
-	return errors.New("supervisor not running")
+
+	return nil
 }

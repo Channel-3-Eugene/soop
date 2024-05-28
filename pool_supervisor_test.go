@@ -20,56 +20,78 @@ func TestSupervisor_Initialization(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), nil, func(input *TestInputType) (TestOutputType, error) {
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
+
+	err = supervisor.Start()
+	assert.NoError(t, err, "Supervisor should start without error")
+
+	for _, w := range pool.GetWorkers() {
+		assert.NotNil(t, w, "Worker should not be nil")
+		assert.Equal(t, w.inChan, supervisor.GetInChan(), "Expected worker input channel to be the same as pool input channel")
+		assert.Equal(t, w.outChan, supervisor.GetOutChan(), "Expected worker output channel to be the same as pool output channel")
+		assert.Equal(t, w.errChan, supervisor.GetEventInChan(), "Expected worker error channel to be the same as pool error channel")
+	}
+
 }
 
 func TestSupervisor_GracefulShutdown(t *testing.T) {
 	ctx := context.Background()
 	COUNT := 10
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), nil, func(input *TestInputType) (TestOutputType, error) {
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
 
-	inputCh, outputCh, _, err := supervisor.Start()
+	err = supervisor.Start()
 	assert.NoError(t, err, "Supervisor should start without error")
 
 	// Send some inputs to process
 	go func() {
 		for i := 0; i < COUNT; i++ {
-			inputCh <- &TestInputType{c: i}
+			inChan <- &TestInputType{c: i}
 		}
 	}()
 
 	// drain output channel
 	recdItems := 0
-	for range outputCh {
+	for range pool.GetOutChan() {
 		recdItems++
 		if recdItems == COUNT {
 			break
@@ -96,33 +118,38 @@ func TestSupervisor_Process(t *testing.T) {
 
 	ctx := context.Background()
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), nil, func(input *TestInputType) (TestOutputType, error) {
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
 
-	inputCh, outputCh, _, err := supervisor.Start()
+	err = supervisor.Start()
 	assert.NoError(t, err, "Supervisor should start without error")
 
 	go func() {
 		for i := 0; i < COUNT; i++ {
-			inputCh <- &TestInputType{c: i}
+			pool.GetInChan() <- &TestInputType{c: i}
 		}
 	}()
 
 	recdItems := 0
-	for range outputCh {
+	for range pool.GetOutChan() {
 		recdItems++
 		if recdItems == COUNT {
 			break
@@ -154,35 +181,40 @@ func TestSupervisor_HighConcurrency(t *testing.T) {
 
 	ctx := context.Background()
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), nil, func(input *TestInputType) (TestOutputType, error) {
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
 
-	inputCh, outputCh, _, err := supervisor.Start()
+	err = supervisor.Start()
 	assert.NoError(t, err, "Supervisor should start without error")
 
 	// Send inputs
 	go func() {
 		for i := 0; i < COUNT; i++ {
-			inputCh <- &TestInputType{c: i}
+			pool.GetInChan() <- &TestInputType{c: i}
 		}
 	}()
 
 	// Receive outputs
 	recdItems := 0
-	for range outputCh {
+	for range pool.GetOutChan() {
 		recdItems++
 		if recdItems == COUNT {
 			break
@@ -203,34 +235,39 @@ func TestSupervisor_WithDelays(t *testing.T) {
 
 	ctx := context.Background()
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), nil, func(input *TestInputType) (TestOutputType, error) {
 			time.Sleep(time.Duration(input.c%10) * time.Millisecond) // Simulate work delay
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
 
-	inputCh, outputCh, _, err := supervisor.Start()
+	err = supervisor.Start()
 	assert.NoError(t, err, "Supervisor should start without error")
 
 	go func() {
 		for i := 0; i < COUNT; i++ {
-			inputCh <- &TestInputType{c: i}
+			pool.GetInChan() <- &TestInputType{c: i}
 		}
 	}()
 
 	recdItems := 0
-	for range outputCh {
+	for range pool.GetOutChan() {
 		recdItems++
 		if recdItems == COUNT {
 			break
@@ -252,42 +289,47 @@ func TestSupervisor_RestartsWorkers(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a worker pool with a handler that panics randomly
-	pool, err := NewWorkerPool(ctx, WORKERS-1, WORKERS+1, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		return NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS-1, WORKERS+1, inChan, 100)
+	if err != nil {
+		t.Fatal("Could not create worker pool", err)
+	}
+	err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, pool.GetOutChan(), pool.GetErrChan(), func(input *TestInputType) (TestOutputType, error) {
 			n, _ := rand.Int(rand.Reader, big.NewInt(5))
 			if n.Int64() == 0 {
+				// fmt.Printf("Panic: %d\n", input.c)
 				panic(input)
 			}
 			return TestOutputType{n: input.c}, nil
-		}).(*WorkerNode[TestInputType, TestOutputType])
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
-	assert.NoError(t, err, "Worker pool should be initialized without error")
+	assert.NoError(t, err, "Worker factory should be set without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
 
-	inChan := make(chan *TestInputType, 100)
-	assert.NotNil(t, inChan, "Expected inChan to be not nil")
 	supervisor := NewPoolSupervisor[TestInputType, TestOutputType](ctx, "pool-supervisor", 100, eventHandler)
 	assert.NotNil(t, supervisor, "Supervisor should be initialized")
-	err = supervisor.AddPool(inChan, nil, 100, pool)
+	err = supervisor.AddPool(pool)
 	assert.NoError(t, err, "Expected AddPool to succeed")
 
-	inputCh, outputCh, _, err := supervisor.Start()
+	err = supervisor.Start()
 	assert.NoError(t, err, "Supervisor should start without error")
-	assert.NotNil(t, inputCh, "Input channel should not be nil")
-	assert.NotNil(t, outputCh, "Output channel should not be nil")
+	assert.NotNil(t, pool.GetInChan(), "Input channel should not be nil")
+	assert.NotNil(t, pool.GetOutChan(), "Output channel should not be nil")
 
 	// Send inputs in a separate goroutine
 	go func() {
 		for i := 0; i < COUNT; i++ {
-			inputCh <- &TestInputType{c: i}
-			fmt.Printf("Sent input %#v\n", TestInputType{c: i})
+			pool.GetInChan() <- &TestInputType{c: i}
 		}
 	}()
 
 	recdItems := 0
-	for output := range outputCh {
+	for range pool.GetOutChan() {
 		recdItems++
-		fmt.Printf("Received output %#v\n", output)
 		if recdItems == COUNT {
 			break
 		}

@@ -8,13 +8,19 @@ import (
 
 // WorkerPool interface defines the operations for a pool of workers.
 type WorkerPool[I, O any] interface {
-	Start(inChan chan *I, outChan chan *O, errChan chan error)
+	Start()
 	Size() int
 	MinWorkers() int
 	MaxWorkers() int
 	AddWorkers(n int)
+	GetWorkers() workersMap[I, O]
 	RemoveWorker(id uint64) error
 	RemoveWorkers(n int) error
+	SetWorkerFactory(factory workersFactory[I, O]) error
+	SetErrChan(chan error) error
+	GetInChan() chan *I
+	GetOutChan() chan *O
+	GetErrChan() chan error
 }
 
 // workersMap is a map of worker IDs to worker nodes.
@@ -37,7 +43,7 @@ type workerPool[I, O any] struct {
 }
 
 // NewWorkerPool creates a new worker pool with the specified minimum and maximum number of workers.
-func NewWorkerPool[I, O any](ctx context.Context, minWorkers, maxWorkers int, workerFactory workersFactory[I, O]) (WorkerPool[I, O], error) {
+func NewWorkerPool[I, O any](ctx context.Context, minWorkers, maxWorkers int, inChan chan *I, bufferSize int) (WorkerPool[I, O], error) {
 	if minWorkers <= 0 {
 		return nil, fmt.Errorf("min workers must be greater than zero")
 	}
@@ -46,45 +52,96 @@ func NewWorkerPool[I, O any](ctx context.Context, minWorkers, maxWorkers int, wo
 		return nil, fmt.Errorf("max workers cannot be less than min workers")
 	}
 
-	workers := make(workersMap[I, O])
 	pool := &workerPool[I, O]{
 		ctx:        ctx,
-		workers:    workers,
-		factory:    workerFactory,
 		minWorkers: minWorkers,
 		maxWorkers: maxWorkers,
+		inChan:     inChan,
+		outChan:    make(chan *O, bufferSize),
 	}
 
-	for i := 0; i < maxWorkers; i++ {
-		pool.addWorker()
-	}
 	return pool, nil
 }
 
+func (p *workerPool[I, O]) SetWorkerFactory(factory workersFactory[I, O]) error {
+	if factory == nil {
+		return fmt.Errorf("worker factory cannot be nil")
+	}
+
+	p.factory = factory
+
+	p.workers = make(workersMap[I, O])
+	for i := 0; i < p.maxWorkers; i++ {
+		err := p.addWorker()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // addWorker adds a single worker to the pool with a unique ID.
-func (p *workerPool[I, O]) addWorker() {
+func (p *workerPool[I, O]) addWorker() error {
+	if p.factory == nil {
+		return fmt.Errorf("worker factory not set")
+	}
 	id := atomic.AddUint64(&p.nextID, 1)
 	w := p.factory(id)
 	w.ID = id
 	p.workers[w.ID] = w
-	if p.inChan != nil && p.outChan != nil && p.errChan != nil {
-		p.StartWorker(w.ID)
+	if p.inChan == nil || p.outChan == nil || p.errChan == nil {
+		return nil
 	}
+	p.StartWorker(w.ID)
+	return nil
 }
 
 // StartWorker starts a single worker in the pool.
 func (p *workerPool[I, O]) StartWorker(ID uint64) {
 	if w, exists := p.workers[ID]; exists {
-		w.Start(p.ctx, p.inChan, p.outChan, p.errChan)
+		w.Start()
 	}
 }
 
 // Start starts all workers in the pool.
-func (p *workerPool[I, O]) Start(inChan chan *I, outChan chan *O, errChan chan error) {
-	p.inChan, p.outChan, p.errChan = inChan, outChan, errChan
+func (p *workerPool[I, O]) Start() {
 	for _, w := range p.workers {
-		w.Start(p.ctx, p.inChan, p.outChan, p.errChan)
+		w.Start()
 	}
+}
+
+// GetErrChan returns the error channel of the pool.
+func (p *workerPool[I, O]) GetErrChan() chan error {
+	return p.errChan
+}
+
+// SetErrChan sets the error channel for the pool.
+func (p *workerPool[I, O]) SetErrChan(errChan chan error) error {
+	if errChan == nil {
+		return fmt.Errorf("error channel cannot be nil")
+	}
+	p.errChan = errChan
+
+	for _, w := range p.workers {
+		w.SetErrChan(errChan)
+	}
+	return nil
+}
+
+// GetWorkers returns the map of workers in the pool.
+func (p *workerPool[I, O]) GetWorkers() workersMap[I, O] {
+	return p.workers
+}
+
+// GetInChan returns the input channel of the pool.
+func (p *workerPool[I, O]) GetInChan() chan *I {
+	return p.inChan
+}
+
+// GetOutChan returns the output channel of the pool.
+func (p *workerPool[I, O]) GetOutChan() chan *O {
+	return p.outChan
 }
 
 // Size returns the current number of workers in the pool.
@@ -108,7 +165,7 @@ func (p *workerPool[I, O]) AddWorkers(n int) {
 		for i := 0; i < n; i++ {
 			p.addWorker()
 			worker := p.workers[p.nextID]
-			worker.Start(p.ctx, p.inChan, p.outChan, p.errChan)
+			worker.Start()
 		}
 	}
 }

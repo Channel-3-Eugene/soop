@@ -8,7 +8,10 @@ import (
 )
 
 type Node interface {
+	GetID() uint64
 	GetName() string
+	Start() error
+	Stop() error
 }
 
 type NodeType int
@@ -56,6 +59,18 @@ func newNode(ctx context.Context, name string, node_type NodeType, factory func(
 	return n
 }
 
+func (n node) GetID() uint64 {
+	return n.ID
+}
+
 func (n node) GetName() string {
 	return n.name
+}
+
+func (n node) Start() error {
+	return nil
+}
+
+func (n node) Stop() error {
+	return nil
 }

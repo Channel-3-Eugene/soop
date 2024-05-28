@@ -23,8 +23,8 @@ func TestWorkerNode_ProcessInput(t *testing.T) {
 		return *input * 2, nil
 	}
 
-	worker := NewWorkerNode(ctx, "testWorker", handler)
-	worker.Start(ctx, inChan, outChan, errChan)
+	worker := NewWorkerNode(ctx, "testWorker", inChan, outChan, errChan, handler)
+	worker.Start()
 
 	// Send input
 	input := 5
@@ -51,8 +51,8 @@ func TestWorkerNode_HandleError(t *testing.T) {
 		return 0, errors.New("handler error")
 	}
 
-	worker := NewWorkerNode(ctx, "testWorker", handler)
-	worker.Start(ctx, inChan, outChan, errChan)
+	worker := NewWorkerNode(ctx, "testWorker", inChan, outChan, errChan, handler)
+	worker.Start()
 
 	// Send input
 	input := 5
@@ -80,8 +80,8 @@ func TestWorkerNode_HandlePanic(t *testing.T) {
 		panic("something went wrong")
 	}
 
-	worker := NewWorkerNode(ctx, "testWorker", handler)
-	worker.Start(ctx, inChan, outChan, errChan)
+	worker := NewWorkerNode(ctx, "testWorker", inChan, outChan, errChan, handler)
+	worker.Start()
 
 	// Send input
 	input := 5
@@ -108,8 +108,8 @@ func TestWorkerNode_ContextCancellation(t *testing.T) {
 		return *input * 2, nil
 	}
 
-	worker := NewWorkerNode(ctx, "testWorker", handler)
-	worker.Start(ctx, inChan, outChan, errChan)
+	worker := NewWorkerNode(ctx, "testWorker", inChan, outChan, errChan, handler)
+	worker.Start()
 
 	// Cancel the context
 	cancel()
@@ -129,12 +129,23 @@ func TestWorkerNode_ContextCancellation(t *testing.T) {
 func TestWorkerPool_ZeroWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err := NewWorkerPool(ctx, 0, 0, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "worker-test", func(input *TestInputType) (TestOutputType, error) {
-			return TestOutputType{n: input.c}, nil
-		})
-		return w.(*WorkerNode[TestInputType, TestOutputType])
-	})
+
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	_, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 0, 0, inChan, 100)
+	// if err != nil {
+	// 	t.Fatalf("Error creating worker pool: %v", err)
+	// }
+	// if pool == nil {
+	// 	t.Fatal("Expected worker pool to be not nil")
+	// }
+	// err = pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+	// 	w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+	// 		return TestOutputType{n: input.c}, nil
+	// 	})
+	// 	return w.(*WorkerNode[TestInputType, TestOutputType])
+	// })
 	assert.Error(t, err, "Expected error for zero workers")
 }
 
@@ -142,12 +153,10 @@ func TestWorkerPool_NegativeWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := NewWorkerPool(ctx, -1, -1, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "worker-test", func(input *TestInputType) (TestOutputType, error) {
-			return TestOutputType{n: input.c}, nil
-		})
-		return w.(*WorkerNode[TestInputType, TestOutputType])
-	})
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	_, err := NewWorkerPool[TestInputType, TestOutputType](ctx, -1, -1, inChan, 100)
 	assert.Error(t, err, "Expected error for negative workers")
 	assert.EqualError(t, err, "min workers must be greater than zero", "Expected 'min workers must be greater than zero' error")
 }
@@ -156,8 +165,12 @@ func TestWorkerPool_Initialization(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, WORKERS, WORKERS, func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
-		w := NewWorkerNode(ctx, "node", func(input *TestInputType) (TestOutputType, error) {
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, WORKERS, WORKERS, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
 			return TestOutputType{n: input.c}, nil
 		})
 		return w.(*WorkerNode[TestInputType, TestOutputType])
@@ -170,14 +183,18 @@ func TestWorkerPool_Size(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
-
 	assert.Equal(t, 5, pool.Size(), "Expected pool size to be 5")
 }
 
@@ -185,14 +202,18 @@ func TestWorkerPool_MinWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
-
 	assert.Equal(t, 3, pool.MinWorkers(), "Expected minimum workers to be 3")
 }
 
@@ -200,14 +221,18 @@ func TestWorkerPool_MaxWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
-
 	assert.Equal(t, 5, pool.MaxWorkers(), "Expected maximum workers to be 5")
 }
 
@@ -215,10 +240,15 @@ func TestWorkerPool_AddWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
@@ -231,10 +261,15 @@ func TestWorkerPool_RemoveWorker(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")
@@ -251,10 +286,15 @@ func TestWorkerPool_RemoveWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := NewWorkerPool(ctx, 3, 5, func(id uint64) *WorkerNode[int, int] {
-		return NewWorkerNode(ctx, "node", func(input *int) (int, error) {
-			return *input, nil
-		}).(*WorkerNode[int, int])
+	inChan := make(chan *TestInputType, 100)
+	assert.NotNil(t, inChan, "Expected inChan to be not nil")
+
+	pool, err := NewWorkerPool[TestInputType, TestOutputType](ctx, 3, 5, inChan, 100)
+	pool.SetWorkerFactory(func(id uint64) *WorkerNode[TestInputType, TestOutputType] {
+		w := NewWorkerNode(ctx, "worker-test", inChan, nil, nil, func(input *TestInputType) (TestOutputType, error) {
+			return TestOutputType{n: input.c}, nil
+		})
+		return w.(*WorkerNode[TestInputType, TestOutputType])
 	})
 	assert.NoError(t, err, "Worker pool should be initialized without error")
 	assert.NotNil(t, pool, "Worker pool should not be nil")

@@ -11,17 +11,21 @@ type EventHandler func(error) error
 
 // Supervisor represents a supervisor that manages a pool of workers.
 type PoolSupervisor[I, O any] interface {
-	Start() (chan *I, chan *O, chan error, error)
+	GetID() uint64
+	GetName() string
+	Start() error
 	Stop() error
-	AddPool(chan *I, chan error, int, WorkerPool[I, O]) error
+	AddPool(WorkerPool[I, O]) error
 	GetPool() WorkerPool[I, O]
+	GetInChan() chan *I
+	GetOutChan() chan *O
+	GetEventInChan() chan error
+	SetEventOutChan(chan error)
 }
 
 // PoolSupervisorNode represents a supervisor node that manages a pool of workers.
 type PoolSupervisorNode[I, O any] struct {
 	node
-	inChan       chan *I
-	outChan      chan *O
 	eventInChan  chan error
 	eventOutChan chan error
 	handler      EventHandler
@@ -41,16 +45,21 @@ func NewPoolSupervisor[I, O any](ctx context.Context, name string, buffSize int,
 }
 
 // AddWorkerPool adds a worker pool to the supervisor node.
-func (s *PoolSupervisorNode[I, O]) AddPool(inputCh chan *I, eventOutChan chan error, buffSize int, pool WorkerPool[I, O]) error {
-	if s.nodeType != NodeTypeDefault && s.nodeType != NodeTypePoolSupervisor {
-		return NewError[error](s.ID, ErrorLevelError, fmt.Sprintf("Cannot add a worker pool to a %s node", nodeTypeNames[s.nodeType]), nil, nil)
+func (s *PoolSupervisorNode[I, O]) AddPool(pool WorkerPool[I, O]) error {
+	if s.pool != nil {
+		return errors.New("worker pool already initialized")
 	}
 
-	s.inChan = inputCh
-	s.outChan = make(chan *O, buffSize)
-	s.eventOutChan = eventOutChan
+	if err := pool.SetErrChan(s.eventInChan); err != nil {
+		return err
+	}
 	s.pool = pool
 	return nil
+}
+
+// GetID returns the ID of the supervisor node.
+func (s *PoolSupervisorNode[I, O]) GetID() uint64 {
+	return s.ID
 }
 
 // GetName returns the name of the supervisor node.
@@ -63,21 +72,38 @@ func (s *PoolSupervisorNode[I, O]) GetPool() WorkerPool[I, O] {
 	return s.pool
 }
 
-// Start starts the supervisor and its worker pool.
-func (s *PoolSupervisorNode[I, O]) Start() (chan *I, chan *O, chan error, error) {
-	if s.inChan == nil || s.outChan == nil || s.eventInChan == nil {
-		return nil, nil, nil, errors.New("input, output, or error channel is not initialized")
-	}
+// GetInChan returns the input channel of the worker pool.
+func (s *PoolSupervisorNode[I, O]) GetInChan() chan *I {
+	return s.pool.GetInChan()
+}
 
+// GetOutChan returns the output channel of the worker pool.
+func (s *PoolSupervisorNode[I, O]) GetOutChan() chan *O {
+	return s.pool.GetOutChan()
+}
+
+// GetEventInChan returns the input event channel.
+func (s *PoolSupervisorNode[I, O]) GetEventInChan() chan error {
+	return s.eventInChan
+}
+
+// SetEventOutChan sets the output event channel.
+func (s *PoolSupervisorNode[I, O]) SetEventOutChan(eventOutChan chan error) {
+	s.eventOutChan = eventOutChan
+}
+
+// Start starts the supervisor and its worker pool.
+func (s *PoolSupervisorNode[I, O]) Start() error {
 	ctx, cancelFunc := context.WithCancel(s.ctx)
 	s.cancelFunc = cancelFunc
 
-	s.pool.Start(s.inChan, s.outChan, s.eventInChan)
+	s.pool.Start()
 
 	go func() {
 		for {
 			select {
 			case event := <-s.eventInChan:
+				fmt.Printf("Received event: %v\n", event)
 				s.Handle(event)
 			case <-ctx.Done():
 				return
@@ -85,7 +111,7 @@ func (s *PoolSupervisorNode[I, O]) Start() (chan *I, chan *O, chan error, error)
 		}
 	}()
 
-	return s.inChan, s.outChan, s.eventInChan, nil
+	return nil
 }
 
 // Handle processes an error event.
@@ -95,13 +121,23 @@ func (s *PoolSupervisorNode[I, O]) Handle(event error) {
 		if customErr.Level == ErrorLevelCritical {
 			err := s.pool.RemoveWorker(customErr.Node)
 			if err != nil {
-				s.eventOutChan <- NewError[error](s.ID, ErrorLevelCritical, "worker removal error", err, nil)
+				if s.eventOutChan != nil {
+					s.eventOutChan <- NewError[error](s.ID, ErrorLevelCritical, "worker removal error", err, nil)
+				} else {
+					fmt.Printf("Worker %d removal error: %v\n", s.ID, err)
+				}
 			}
 			// Replace the worker
 			s.pool.AddWorkers(1)
 		}
-		s.inChan <- customErr.InputItem
-		fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
+		if ch := s.pool.GetInChan(); ch != nil {
+			ch <- customErr.InputItem
+			fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
+		} else {
+			fmt.Printf("Input channel is nil!\n")
+		}
+		// s.pool.GetInChan() <- customErr.InputItem
+		// fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
 	}
 
 	if s.eventOutChan != nil {
@@ -114,8 +150,7 @@ func (s *PoolSupervisorNode[I, O]) Stop() error {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 		s.cancelFunc = nil // Set to nil to prevent multiple cancels
-		close(s.outChan)
-		close(s.eventInChan)
+		close(s.pool.GetOutChan())
 		return nil
 	}
 	return errors.New("supervisor not running")
