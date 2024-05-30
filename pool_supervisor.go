@@ -132,7 +132,6 @@ func (s *PoolSupervisorNode[I, O]) Handle(event error) {
 		}
 		if ch := s.pool.GetInChan(); ch != nil {
 			ch <- customErr.InputItem
-			fmt.Printf("Resubmitted input: %v\n", customErr.InputItem)
 		} else {
 			fmt.Printf("Input channel is nil!\n")
 		}

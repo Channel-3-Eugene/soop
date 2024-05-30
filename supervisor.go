@@ -11,6 +11,8 @@ type Supervisor[I, O any] interface {
 	GetName() string
 	Start() error
 	Stop() error
+	AddChild(Node) error
+	Handle(error)
 	GetChildren() map[uint64]Node
 	SetEventOutChan(chan error)
 }
@@ -27,13 +29,16 @@ type SupervisorNode[I, O any] struct {
 }
 
 // NewSupervisor creates a new supervisor node with children.
+// TODO: Add a factory function for creating child nodes.
 func NewSupervisor[I, O any](ctx context.Context, name string, buffSize int, handler EventHandler) *SupervisorNode[I, O] {
 	newCtx, cancel := context.WithCancel(ctx)
 	return &SupervisorNode[I, O]{
-		node:       newNode(ctx, name, NodeTypeSupervisor, nil), // TODO: Add factory function
-		ctx:        newCtx,
-		cancelFunc: cancel,
-		children:   make(map[uint64]Node),
+		node:        newNode(ctx, name, NodeTypeSupervisor, nil), // TODO: Add factory function
+		ctx:         newCtx,
+		cancelFunc:  cancel,
+		children:    make(map[uint64]Node),
+		eventInChan: make(chan error, buffSize),
+		handler:     handler,
 	}
 }
 
@@ -84,11 +89,15 @@ func (s *SupervisorNode[I, O]) Handle(event error) {
 		if customErr.Level == ErrorLevelCritical {
 			// Remove child
 			// TODO: Remove additional references, like children of a child, or nodes in a pool in a child pool supervisor.
+			// TODO: Implement a way to restart the child node.
+			// TODO: Implement a way to restart the supervisor.
 			delete(s.children, customErr.Node)
+
 		}
 	}
 
 	if s.eventOutChan != nil {
+		fmt.Printf("Supervisor %s sending event %#v\n from handler %#v to eventOutChan %#v\n", s.name, event, s.handler, s.eventOutChan)
 		s.eventOutChan <- s.handler(event)
 	}
 }
