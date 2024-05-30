@@ -53,6 +53,7 @@ func (s *PoolSupervisorNode[I, O]) AddPool(pool WorkerPool[I, O]) error {
 	if err := pool.SetErrChan(s.eventInChan); err != nil {
 		return err
 	}
+
 	s.pool = pool
 	return nil
 }
